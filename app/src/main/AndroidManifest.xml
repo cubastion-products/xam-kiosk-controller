@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
 
     <!-- Required for startForegroundService() on Android 9+ -->
@@ -25,6 +25,10 @@
     <!-- Kiosk UX -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <queries>
+    <package android:name="com.xam.nodeapp" />
+</queries>
+
     <application
         android:label="KioskController"
         android:allowBackup="false"
@@ -32,6 +36,17 @@
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true"
         tools:targetApi="q">
+
+	<provider
+	    android:name="androidx.core.content.FileProvider"
+	    android:authorities="${applicationId}.fileprovider"
+	    android:exported="false"
+	    android:grantUriPermissions="true">
+	    <meta-data
+	        android:name="android.support.FILE_PROVIDER_PATHS"
+	        android:resource="@xml/file_paths" />
+	</provider>
+
 
 
         <!-- ========================= -->
@@ -79,7 +94,7 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
-            android:taskAffinity=""
+            android:taskAffinity="com.xam.kiosk"
             android:screenOrientation="portrait">
 
             <!-- This activity is both LAUNCHER + HOME -->

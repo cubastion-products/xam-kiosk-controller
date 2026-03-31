@@ -1,5 +1,6 @@
 package com.xam.kiosk.boot;
 
+import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -28,10 +29,11 @@ public class BootLaunchService extends Service {
 
     // Tuning
     private static final long POLL_EVERY_MS = 700;
-    private static final long TIMEOUT_MS = 60_000;  // 60s max wait
+    private static final long TIMEOUT_MS = 60_000; // 60s max wait
 
     private final Handler h = new Handler(Looper.getMainLooper());
     private long startTs;
+    private boolean launchIssued = false;
 
     @Override
     public void onCreate() {
@@ -47,6 +49,14 @@ public class BootLaunchService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "onStartCommand: waiting for user unlock + storage ready...");
+
+        if (launchIssued) {
+            Log.i(TAG, "Launch already issued earlier, stopping duplicate service instance.");
+            shutdownService();
+            return START_NOT_STICKY;
+        }
+
+        h.removeCallbacks(checkReadyRunnable);
         h.post(checkReadyRunnable);
         return START_NOT_STICKY;
     }
@@ -54,7 +64,20 @@ public class BootLaunchService extends Service {
     private final Runnable checkReadyRunnable = new Runnable() {
         @Override
         public void run() {
+            if (launchIssued) {
+                Log.i(TAG, "checkReadyRunnable: launch already issued, stopping.");
+                shutdownService();
+                return;
+            }
+
             try {
+                if (isKioskAlreadyRunning()) {
+                    Log.i(TAG, "Kiosk already running, not launching again.");
+                    launchIssued = true;
+                    shutdownService();
+                    return;
+                }
+
                 boolean unlocked = isUserUnlocked();
                 boolean storageReady = isStorageReady();
 
@@ -73,7 +96,7 @@ public class BootLaunchService extends Service {
 
             } catch (Throwable t) {
                 Log.e(TAG, "readyCheck failed", t);
-                // keep retrying
+                // keep retrying until timeout
             }
 
             h.postDelayed(this, POLL_EVERY_MS);
@@ -91,22 +114,15 @@ public class BootLaunchService extends Service {
         }
     }
 
-    /**
-     * Storage "ready" means:
-     * - emulated storage exists and is readable
-     * AND/OR
-     * - StorageManager reports at least one usable public volume
-     */
     private boolean isStorageReady() {
-        // 1) Quick filesystem check (works across many builds)
         try {
             File emu0 = new File("/storage/emulated/0");
             if (emu0.exists() && emu0.canRead()) {
                 return true;
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        }
 
-        // 2) StorageManager check (API 24+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try {
                 StorageManager sm = (StorageManager) getSystemService(STORAGE_SERVICE);
@@ -114,8 +130,6 @@ public class BootLaunchService extends Service {
                     List<StorageVolume> vols = sm.getStorageVolumes();
                     if (vols != null) {
                         for (StorageVolume v : vols) {
-                            // We just need at least one mounted-ish volume visible to the framework.
-                            // getState() is hidden on some APIs; so we rely on directory existence where possible.
                             File dir = v.getDirectory();
                             if (dir != null && dir.exists() && dir.canRead()) {
                                 return true;
@@ -131,7 +145,53 @@ public class BootLaunchService extends Service {
         return false;
     }
 
+    private boolean isKioskAlreadyRunning() {
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            if (am == null) return false;
+
+            List<ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(10);
+            if (tasks == null) return false;
+
+            for (ActivityManager.RunningTaskInfo task : tasks) {
+                if (task == null) continue;
+
+                if (task.topActivity != null
+                        && "com.xam.kiosk".equals(task.topActivity.getPackageName())) {
+                    Log.i(TAG, "Kiosk already running by topActivity="
+                            + task.topActivity.flattenToShortString());
+                    return true;
+                }
+
+                if (task.baseActivity != null
+                        && "com.xam.kiosk".equals(task.baseActivity.getPackageName())) {
+                    Log.i(TAG, "Kiosk already running by baseActivity="
+                            + task.baseActivity.flattenToShortString());
+                    return true;
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "isKioskAlreadyRunning check failed", t);
+        }
+        return false;
+    }
+
     private void launchKiosk() {
+        if (launchIssued) {
+            Log.i(TAG, "launchKiosk skipped: launch already issued.");
+            shutdownService();
+            return;
+        }
+
+        if (isKioskAlreadyRunning()) {
+            Log.i(TAG, "launchKiosk skipped: KioskActivity already running.");
+            launchIssued = true;
+            shutdownService();
+            return;
+        }
+
+        launchIssued = true;
+
         try {
             Intent i = new Intent(getApplicationContext(), KioskActivity.class);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
@@ -142,8 +202,24 @@ public class BootLaunchService extends Service {
         } catch (Throwable t) {
             Log.e(TAG, "Failed to start KioskActivity", t);
         } finally {
-            try { stopForeground(true); } catch (Throwable ignored) {}
+            shutdownService();
+        }
+    }
+
+    private void shutdownService() {
+        try {
+            h.removeCallbacks(checkReadyRunnable);
+        } catch (Throwable ignored) {
+        }
+
+        try {
+            stopForeground(true);
+        } catch (Throwable ignored) {
+        }
+
+        try {
             stopSelf();
+        } catch (Throwable ignored) {
         }
     }
 
