@@ -102,7 +102,7 @@ public class KioskActivity extends Activity {
     // =========================
 
     private void applyHubWifi() {
-        File configFile = new File("/sdcard/wifi_config.json");
+        File configFile = new File(getExternalFilesDir(null), "wifi_config.json");
         String ssid = null;
 
         if (configFile.exists()) {
