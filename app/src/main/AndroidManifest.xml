@@ -89,7 +89,16 @@
             android:exported="false" />
 
         <!-- ========================= -->
-        <!-- WiFi monitor receiver -->
+        <!-- WiFi config receiver (intent-triggered) -->
+        <!-- ========================= -->
+        <receiver android:name=".WifiConfigReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.xam.kiosk.CONFIGURE_WIFI"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- ========================= -->
+        <!-- WiFi monitor receiver (auto-reconnect on drop) -->
         <!-- ========================= -->
         <receiver android:name=".WifiMonitorReceiver" android:exported="false">
             <intent-filter>
