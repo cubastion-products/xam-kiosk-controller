@@ -6,8 +6,10 @@
     <!-- Boot + network -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.OVERRIDE_WIFI_CONFIG" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
 
@@ -85,6 +87,15 @@
         <service
             android:name="com.xam.kiosk.boot.BootLaunchService"
             android:exported="false" />
+
+        <!-- ========================= -->
+        <!-- WiFi monitor receiver -->
+        <!-- ========================= -->
+        <receiver android:name=".WifiMonitorReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.wifi.STATE_CHANGE"/>
+            </intent-filter>
+        </receiver>
 
         <!-- ========================= -->
         <!-- Kiosk HOME Activity -->

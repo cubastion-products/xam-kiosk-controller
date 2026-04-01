@@ -23,7 +23,13 @@ import android.view.WindowManager;
 import com.xam.kiosk.R;
 import com.xam.kiosk.admin.KioskDeviceAdminReceiver;
 
+import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiManager;
+
+import org.json.JSONObject;
+
 import java.io.File;
+import java.io.FileInputStream;
 
 public class KioskActivity extends Activity {
 
@@ -74,7 +80,8 @@ public class KioskActivity extends Activity {
         // If device owner: force kiosk as HOME + allow locktask packages
         ensurePoliciesIfDeviceOwner();
 
-        // No Wi-Fi / config flow. Go straight to NodeApp stage.
+        // Apply hub Wi-Fi before launching NodeApp
+        applyHubWifi();
         ensureNodeAppInstalledThenLaunch();
     }
 
@@ -88,6 +95,75 @@ public class KioskActivity extends Activity {
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) enableImmersiveModeSafe();
+    }
+
+    // =========================
+    // Hub Wi-Fi
+    // =========================
+
+    private void applyHubWifi() {
+        File configFile = new File("/sdcard/wifi_config.json");
+        String ssid = null;
+
+        if (configFile.exists()) {
+            try {
+                FileInputStream fis = new FileInputStream(configFile);
+                byte[] data = new byte[(int) configFile.length()];
+                fis.read(data);
+                fis.close();
+
+                JSONObject json = new JSONObject(new String(data));
+                ssid = json.getString("ssid");
+
+                getSharedPreferences("hub_config", MODE_PRIVATE)
+                        .edit().putString("hub_wifi_ssid", ssid).apply();
+
+                configFile.delete();
+            } catch (Exception e) {
+                Log.w("KioskWifi", "Failed to parse wifi_config.json: " + e);
+            }
+        } else {
+            // No new config — reconnect using saved SSID from last provisioning
+            ssid = getSharedPreferences("hub_config", MODE_PRIVATE)
+                    .getString("hub_wifi_ssid", null);
+        }
+
+        if (ssid != null) {
+            connectToWifi(ssid);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void connectToWifi(String ssid) {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (!wm.isWifiEnabled()) {
+            wm.setWifiEnabled(true);
+        }
+
+        // Remove stale entries for same SSID
+        java.util.List<WifiConfiguration> configs = wm.getConfiguredNetworks();
+        if (configs != null) {
+            for (WifiConfiguration c : configs) {
+                if (("\"" + ssid + "\"").equals(c.SSID)) {
+                    wm.removeNetwork(c.networkId);
+                }
+            }
+        }
+
+        WifiConfiguration config = new WifiConfiguration();
+        config.SSID = "\"" + ssid + "\"";
+        config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
+        config.priority = 999;
+
+        int netId = wm.addNetwork(config);
+        if (netId == -1) {
+            Log.e("KioskWifi", "addNetwork failed — is Device Owner confirmed?");
+            return;
+        }
+        wm.disconnect();
+        wm.enableNetwork(netId, true);
+        wm.reconnect();
+        Log.i("KioskWifi", "WiFi connecting: ssid=" + ssid + " netId=" + netId);
     }
 
     // =========================
