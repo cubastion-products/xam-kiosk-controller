@@ -24,6 +24,7 @@ import com.xam.kiosk.R;
 import com.xam.kiosk.admin.KioskDeviceAdminReceiver;
 
 import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 
 import org.json.JSONObject;
@@ -39,8 +40,14 @@ public class KioskActivity extends Activity {
     private static final String NODE_APP_PACKAGE = "com.xam.nodeapp";
     private static final String NODE_APK_NAME = "NodeApp.apk";
 
+    // Default hub Wi-Fi SSID — used when no config file or broadcast overrides it
+    private static final String DEFAULT_HUB_SSID = "4c4c4544004a39108038b7c04f334a-1";
+
     // Retry pacing
     private static final long INSTALL_RECHECK_MS = 5000;
+
+    // Wi-Fi watchdog: check connection every 15 seconds
+    private static final long WIFI_CHECK_INTERVAL_MS = 15000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -101,9 +108,8 @@ public class KioskActivity extends Activity {
     // Hub Wi-Fi
     // =========================
 
-    private void applyHubWifi() {
+    private String resolveHubSsid() {
         File configFile = new File(getExternalFilesDir(null), "wifi_config.json");
-        String ssid = null;
 
         if (configFile.exists()) {
             try {
@@ -113,29 +119,70 @@ public class KioskActivity extends Activity {
                 fis.close();
 
                 JSONObject json = new JSONObject(new String(data));
-                ssid = json.getString("ssid");
+                String ssid = json.getString("ssid");
 
                 getSharedPreferences("hub_config", MODE_PRIVATE)
                         .edit().putString("hub_wifi_ssid", ssid).apply();
 
                 configFile.delete();
+                return ssid;
             } catch (Exception e) {
                 Log.w("KioskWifi", "Failed to parse wifi_config.json: " + e);
             }
-        } else {
-            // No new config — reconnect using saved SSID from last provisioning
-            ssid = getSharedPreferences("hub_config", MODE_PRIVATE)
-                    .getString("hub_wifi_ssid", null);
         }
 
-        if (ssid != null) {
-            connectToWifi(ssid);
-        }
+        // Try saved SSID from last provisioning or broadcast
+        String saved = getSharedPreferences("hub_config", MODE_PRIVATE)
+                .getString("hub_wifi_ssid", null);
+        if (saved != null) return saved;
+
+        // Fall back to hardcoded default
+        Log.i("KioskWifi", "No saved SSID — using default: " + DEFAULT_HUB_SSID);
+        return DEFAULT_HUB_SSID;
+    }
+
+    private void applyHubWifi() {
+        String ssid = resolveHubSsid();
+        connectToWifi(ssid);
+        startWifiWatchdog(ssid);
+    }
+
+    /**
+     * Persistent watchdog: checks every 15s if still connected to the target SSID.
+     * If not connected, attempts to reconnect. Runs for the lifetime of the activity.
+     */
+    private void startWifiWatchdog(String ssid) {
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isConnectedToSsid(ssid)) {
+                    Log.d("KioskWifi", "Watchdog: connected to " + ssid);
+                } else {
+                    Log.w("KioskWifi", "Watchdog: not connected — reconnecting to " + ssid);
+                    connectToWifi(ssid);
+                }
+                handler.postDelayed(this, WIFI_CHECK_INTERVAL_MS);
+            }
+        }, WIFI_CHECK_INTERVAL_MS);
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean isConnectedToSsid(String ssid) {
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        WifiInfo info = wm.getConnectionInfo();
+        return info != null && ("\"" + ssid + "\"").equals(info.getSSID());
     }
 
     @SuppressWarnings("deprecation")
     private void connectToWifi(String ssid) {
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+
+        // Skip if already connected to this SSID
+        if (isConnectedToSsid(ssid)) {
+            Log.d("KioskWifi", "Already connected to " + ssid);
+            return;
+        }
+
         if (!wm.isWifiEnabled()) {
             wm.setWifiEnabled(true);
         }
