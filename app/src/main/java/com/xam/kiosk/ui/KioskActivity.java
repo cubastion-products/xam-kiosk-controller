@@ -96,6 +96,13 @@ public class KioskActivity extends Activity {
     protected void onResume() {
         super.onResume();
         enableImmersiveModeSafe();
+
+        // If NodeApp was already launched and user lands back here (e.g. back gesture),
+        // immediately re-launch NodeApp so user never gets stuck on this screen.
+        if (launchAttempted && isPackageInstalled(NODE_APP_PACKAGE)) {
+            launchAttempted = false; // reset so launchNodeApp() will fire
+            launchNodeApp();
+        }
     }
 
     @Override
